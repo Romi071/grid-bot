@@ -1,4 +1,5 @@
 import os
+import time
 from dotenv import load_dotenv
 from binance.client import Client
 
@@ -11,32 +12,24 @@ api_secret = os.getenv("API_SECRET")
 client = Client(api_key, api_secret, testnet=True)
 
 #Cancel all open orders to make the script safely runnable
-client.cancel_all_open_orders(symbol="BTCUSDT")
-print(client.get_open_orders(symbol="BTCUSDT"))
+try:
+    client.cancel_all_open_orders(symbol="BTCUSDT")
+except Exception:
+    pass
 
-#Pull live sandbox balance & BTC ticker
-usdt_balance = client.get_asset_balance(asset = "USDT")
+#Pull live BTC ticker price
 ticker = client.get_symbol_ticker(symbol="BTCUSDT")
-
 current_price = float(ticker["price"])
-free_usdt = float(usdt_balance["free"])
-
-print(f"💰 Available USDT: ${free_usdt:.2f}")
 print(f"📈 Current BTC Price: ${current_price:.2f}")
 
-#Define the n- buy and sell levels with grid steps of 1%
+#Define the n- buy levels with grid steps of 1%
 grid_step = 0.01
-n = 3
-buy_levels = []
-sell_levels = []
-for k in range(1, n+1):
-    buy_levels.append(current_price * (1 - k * grid_step))
-    sell_levels.append(current_price * (1 + k * grid_step))
+n = 30
+buy_levels = [current_price * (1 - k * grid_step) for k in range(1, n+1)]
 
-#Order dispatching:
-usdt_per_order = 15
-
-#Buy loop
+#Initial buy loop and order dispatching
+usdt_per_order = 1000
+active_orders = {}
 for price in buy_levels:
     buy_price = str(round(price, 2))
     btc_per_order = str(round(usdt_per_order / price, 5))
@@ -46,14 +39,56 @@ for price in buy_levels:
     quantity=btc_per_order,
     price=buy_price
     )
+    #Create a dictionary saving the active order IDs as the key and their buy price (negative) as their value 
+    active_orders[order["orderId"]] = -float(order["price"])
 
-#Sell Loop
-for price in sell_levels:
-    sell_price = str(round(price, 2))
-    btc_per_order = str(round(usdt_per_order / price, 5))
+#Print currently free and locked USDT and BTC balances
+usdt_balance = client.get_asset_balance(asset = "USDT")
+free_usdt = float(usdt_balance["free"])
+locked_usdt = float(usdt_balance["locked"])
+print(f"💰 Available USDT: ${free_usdt:.2f} free + ${locked_usdt:.2f} locked")
 
-    order = client.order_limit_sell(
-    symbol="BTCUSDT",
-    quantity=btc_per_order,
-    price=sell_price
-    )
+btc_balance = client.get_asset_balance(asset="BTC")
+free_btc = float(btc_balance["free"])
+locked_btc = float(btc_balance["locked"])
+print(f"🥇 Available BTC: {free_btc:.2f} ₿ free + {locked_btc:.2f} ₿ locked")
+
+
+#Infinite bot loop
+while True:
+    #Ping Binance for my currently open orders and their IDs
+    open_orders = client.get_open_orders(symbol="BTCUSDT")
+    open_ids = [dictionary["orderId"] for dictionary in open_orders]
+    for id in list(active_orders):
+        #If an ID in my active orders dictionary is not currently open:
+        if id not in open_ids:
+            #If a buy order was fulfilled place a sell order slightly above the original grid level
+            if active_orders[id] < 0:
+                id_price = -active_orders[id]
+                selling_price = str(round(id_price * (1 + grid_step), 2))
+                btc_per_order = str(round(usdt_per_order / id_price, 5))
+
+                ordersell = client.order_limit_sell(
+                symbol="BTCUSDT",
+                quantity=btc_per_order,
+                price=selling_price
+                )
+
+                active_orders[ordersell["orderId"]] = id_price
+                active_orders.pop(id)
+            #If a sell order was fulfilled place a buy order at the original grid level
+            else:
+                id_price = active_orders[id]
+                buying_price = str(round(id_price, 2))
+                btc_per_order = str(round(usdt_per_order / id_price, 5))
+                
+                orderbuy = client.order_limit_buy(
+                symbol="BTCUSDT",
+                quantity=btc_per_order,
+                price=buying_price
+                )
+                
+                active_orders[orderbuy["orderId"]] = -float(orderbuy["price"])
+                active_orders.pop(id)
+    time.sleep(1)
+
