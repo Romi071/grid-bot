@@ -29,6 +29,7 @@ buy_levels = [current_price * (1 - k * grid_step) for k in range(1, n+1)]
 
 #Initial buy loop and order dispatching
 usdt_per_order = 1000
+cumul_profit = 0
 active_orders = {}
 for price in buy_levels:
     buy_price = str(round(price, 2))
@@ -66,7 +67,7 @@ while True:
             if active_orders[id] < 0:
                 id_price = -active_orders[id]
                 selling_price = str(round(id_price * (1 + grid_step), 2))
-                btc_per_order = str(round(usdt_per_order / id_price, 5))
+                btc_per_order = str(round(0.999 * usdt_per_order / id_price, 5))
 
                 ordersell = client.order_limit_sell(
                 symbol="BTCUSDT",
@@ -90,5 +91,10 @@ while True:
                 
                 active_orders[orderbuy["orderId"]] = -float(orderbuy["price"])
                 active_orders.pop(id)
+                #Profit tracker
+                net_profit = usdt_per_order * (grid_step - (0.001 + 0.001 * (1 + grid_step)))
+                cumul_profit += net_profit
+                print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.4f}. Total net profit made since start: {cumul_profit:.4f}")
+                
     time.sleep(1)
 
