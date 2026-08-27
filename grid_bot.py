@@ -91,7 +91,7 @@ while True:
                 
                 active_orders[orderbuy["orderId"]] = -float(orderbuy["price"])
                 active_orders.pop(id)
-                #Profit tracker
+                #Net and Cumulative Profit tracker
                 net_profit = usdt_per_order * (grid_step - (0.001 + 0.001 * (1 + grid_step)))
                 cumul_profit += net_profit
                 print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.4f}. Total net profit made since start: {cumul_profit:.4f}")
