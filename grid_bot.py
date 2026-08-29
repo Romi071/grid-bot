@@ -87,40 +87,47 @@ while True:
     for id in list(active_orders):
         #If an ID in my active orders dictionary is not currently open:
         if int(id) not in open_ids:
-            #If a buy order was fulfilled place a sell order slightly above the original grid level
-            if active_orders[id] < 0:
-                id_price = -active_orders[id]
-                selling_price = str(round(id_price * (1 + grid_step), 2))
-                btc_per_order = str(round(0.999 * usdt_per_order / id_price, 5))
+            #Check if tthe missing order is FILLED or cancelled/expired
+            missing_order = client.get_order(symbol="BTCUSDT", orderId=int(id))
+            if missing_order["status"] == "FILLED":
+                #If a buy order was fulfilled place a sell order slightly above the original grid level
+                if active_orders[id] < 0:
+                    id_price = -active_orders[id]
+                    selling_price = str(round(id_price * (1 + grid_step), 2))
+                    btc_per_order = str(round(0.999 * usdt_per_order / id_price, 5))
 
-                ordersell = client.order_limit_sell(
-                symbol="BTCUSDT",
-                quantity=btc_per_order,
-                price=selling_price
-                )
+                    ordersell = client.order_limit_sell(
+                    symbol="BTCUSDT",
+                    quantity=btc_per_order,
+                    price=selling_price
+                    )
 
-                active_orders[ordersell["orderId"]] = id_price
-                active_orders.pop(id)
-                
-            #If a sell order was fulfilled place a buy order at the original grid level
+                    active_orders[ordersell["orderId"]] = id_price
+                    active_orders.pop(id)
+                    
+                #If a sell order was fulfilled place a buy order at the original grid level
+                else:
+                    id_price = active_orders[id]
+                    buying_price = str(round(id_price, 2))
+                    btc_per_order = str(round(usdt_per_order / id_price, 5))
+                    
+                    orderbuy = client.order_limit_buy(
+                    symbol="BTCUSDT",
+                    quantity=btc_per_order,
+                    price=buying_price
+                    )
+                    
+                    active_orders[orderbuy["orderId"]] = -float(orderbuy["price"])
+                    active_orders.pop(id)
+                    
+                    #Net and Cumulative Profit tracker
+                    net_profit = usdt_per_order * (grid_step - (0.001 + 0.001 * (1 + grid_step)))
+                    cumul_profit += net_profit
+                    print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.4f}. Total net profit made since start: {cumul_profit:.4f}")
+
+            #The order is cancelled or expired and should be removed from active orders
             else:
-                id_price = active_orders[id]
-                buying_price = str(round(id_price, 2))
-                btc_per_order = str(round(usdt_per_order / id_price, 5))
-                
-                orderbuy = client.order_limit_buy(
-                symbol="BTCUSDT",
-                quantity=btc_per_order,
-                price=buying_price
-                )
-                
-                active_orders[orderbuy["orderId"]] = -float(orderbuy["price"])
                 active_orders.pop(id)
-                
-                #Net and Cumulative Profit tracker
-                net_profit = usdt_per_order * (grid_step - (0.001 + 0.001 * (1 + grid_step)))
-                cumul_profit += net_profit
-                print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.4f}. Total net profit made since start: {cumul_profit:.4f}")
 
             #Update the .json file
             bot_state["profit"] = cumul_profit
@@ -129,4 +136,3 @@ while True:
                 json.dump(bot_state, file)
 
     time.sleep(1)
-
