@@ -54,15 +54,26 @@ def load_existing_orders():
     with open("orders.json", "r") as file:
         return json.load(file)
 
+#Function to save current bot state to the .json
+def save_state(bot_state, cumul_profit, active_orders, vqueue):
+    bot_state["profit"] = cumul_profit
+    bot_state["active"] = active_orders
+    bot_state["queue"] = vqueue
+    with open("orders.json", "w") as file:
+        json.dump(bot_state, file)
+
 if os.path.exists("orders.json"):
     bot_state = load_existing_orders()
     cumul_profit = float(bot_state["profit"])
     active_orders = bot_state["active"]
+    vqueue = bot_state["queue"]
+    print(f"💵 Previous run detected, profits up until now: ${cumul_profit}")
 else:
     active_orders = initialize_new_grid()
     cumul_profit = 0
-    #Create a dictionary nesting the active orders dictionary and the cumul profit variable and dump it into a .json
-    bot_state = {"profit": cumul_profit, "active": active_orders}
+    vqueue = []
+    #Create a dictionary nesting the active orders dictionary, cumul profit variable, and virtual queue list, and dump it into a .json
+    bot_state = {"profit": cumul_profit, "active": active_orders, "queue": vqueue}
     with open("orders.json", "w") as file:
         json.dump(bot_state, file)
     
@@ -76,18 +87,19 @@ print(f"💰 Available USDT: ${free_usdt:.2f} free + ${locked_usdt:.2f} locked")
 btc_balance = client.get_asset_balance(asset="BTC")
 free_btc = float(btc_balance["free"])
 locked_btc = float(btc_balance["locked"])
-print(f"🥇 Available BTC: {free_btc:.2f} ₿ free + {locked_btc:.2f} ₿ locked")
+print(f"🥇 Available BTC: {free_btc:.4f} ₿ free + {locked_btc:.4f} ₿ locked")
 
 
 #Infinite bot loop
 while True:
-    #Ping Binance for my currently open orders and their IDs
+    #Ping Binance for BTC price, and my currently open orders with their IDs
+    live_price = float(client.get_symbol_ticker(symbol="BTCUSDT")["price"])
     open_orders = client.get_open_orders(symbol="BTCUSDT")
     open_ids = [dictionary["orderId"] for dictionary in open_orders]
     for id in list(active_orders):
         #If an ID in my active orders dictionary is not currently open:
         if int(id) not in open_ids:
-            #Check if tthe missing order is FILLED or cancelled/expired
+            #Check if the missing order is FILLED or cancelled/expired
             missing_order = client.get_order(symbol="BTCUSDT", orderId=int(id))
             if missing_order["status"] == "FILLED":
                 #If a buy order was fulfilled place a sell order slightly above the original grid level
@@ -117,7 +129,7 @@ while True:
                     price=buying_price
                     )
                     
-                    active_orders[orderbuy["orderId"]] = -float(orderbuy["price"])
+                    active_orders[orderbuy["orderId"]] = -id_price
                     active_orders.pop(id)
                     
                     #Net and Cumulative Profit tracker
@@ -125,14 +137,48 @@ while True:
                     cumul_profit += net_profit
                     print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.4f}. Total net profit made since start: {cumul_profit:.4f}")
 
-            #The order is cancelled or expired and should be removed from active orders
-            else:
+            #The order is cancelled or expired and should be removed from active orders and into a virtual queue
+            else:      
+                vqueue.append(active_orders[id])
                 active_orders.pop(id)
 
             #Update the .json file
-            bot_state["profit"] = cumul_profit
-            bot_state["active"] = active_orders
-            with open("orders.json", "w") as file:
-                json.dump(bot_state, file)
+            save_state(bot_state, cumul_profit, active_orders, vqueue)
+
+    #Loop over the current virtual queue of cancelled orders to check if market is safe to place them
+    for missing_price in list(vqueue):
+        #If buy, check if buy price < BTC and place it
+        if missing_price < 0 and -missing_price < live_price:
+            buying_price = str(round(-missing_price, 2))
+            btc_per_order = str(round(usdt_per_order / -missing_price, 5))
+
+            orderbuy = client.order_limit_buy(
+            symbol="BTCUSDT",
+            quantity=btc_per_order,
+            price=buying_price
+            )
+
+            active_orders[orderbuy["orderId"]] = missing_price
+            vqueue.remove(missing_price)
+
+            #Update the .json file
+            save_state(bot_state, cumul_profit, active_orders, vqueue)
+
+        #If sell, check if selling price > BTC and place it
+        elif missing_price > 0 and missing_price * (1 + grid_step) > live_price:
+            selling_price = str(round(missing_price * (1 + grid_step), 2))
+            btc_per_order = str(round(0.999 * usdt_per_order / missing_price, 5))
+
+            ordersell = client.order_limit_sell(
+            symbol="BTCUSDT",
+            quantity=btc_per_order,
+            price=selling_price
+            )
+
+            active_orders[ordersell["orderId"]] = missing_price
+            vqueue.remove(missing_price)
+
+            #Update the .json file
+            save_state(bot_state, cumul_profit, active_orders, vqueue)
 
     time.sleep(1)
