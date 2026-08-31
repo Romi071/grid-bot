@@ -12,21 +12,23 @@ api_secret = os.getenv("API_SECRET")
 #Authenticate to the Testnet client
 client = Client(api_key, api_secret, testnet=True)
 
-#Print live BTC ticker price
-ticker = client.get_symbol_ticker(symbol="BTCUSDT")
-current_price = float(ticker["price"])
-print(f"📈 Current BTC Price: ${current_price:.2f}")
-
-#Define the grid parameters
+#Define the grid parameters and ticker
 n = 30
 grid_step = 0.01
 usdt_per_order = 1000
+trading_symbol = "BTCUSDT"
+
+#Print live BTC ticker price
+ticker = client.get_symbol_ticker(symbol=trading_symbol)
+current_price = float(ticker["price"])
+print(f"📈 Current {trading_symbol} Price: ${current_price:.2f}")
+
 
 #Function to initialize a new grid and buy orders if the script has never been ran before
 def initialize_new_grid():
     #Cancel all open orders to make the script safely runnable
     try:
-        client.cancel_all_open_orders(symbol="BTCUSDT")
+        client.cancel_all_open_orders(symbol=trading_symbol)
     except Exception:
         pass
 
@@ -40,7 +42,7 @@ def initialize_new_grid():
         btc_per_order = str(round(usdt_per_order / price, 5))
 
         order = client.order_limit_buy(
-        symbol="BTCUSDT",
+        symbol=trading_symbol,
         quantity=btc_per_order,
         price=buy_price
         )
@@ -92,15 +94,15 @@ print(f"🥇 Available BTC: {free_btc:.4f} ₿ free + {locked_btc:.4f} ₿ locke
 
 #Infinite bot loop
 while True:
-    #Ping Binance for BTC price, and my currently open orders with their IDs
-    live_price = float(client.get_symbol_ticker(symbol="BTCUSDT")["price"])
-    open_orders = client.get_open_orders(symbol="BTCUSDT")
+    #Ping Binance for ticker price, and my currently open orders with their IDs
+    live_price = float(client.get_symbol_ticker(symbol=trading_symbol)["price"])
+    open_orders = client.get_open_orders(symbol=trading_symbol)
     open_ids = [dictionary["orderId"] for dictionary in open_orders]
     for id in list(active_orders):
         #If an ID in my active orders dictionary is not currently open:
         if int(id) not in open_ids:
             #Check if the missing order is FILLED or cancelled/expired
-            missing_order = client.get_order(symbol="BTCUSDT", orderId=int(id))
+            missing_order = client.get_order(symbol=trading_symbol, orderId=int(id))
             if missing_order["status"] == "FILLED":
                 #If a buy order was fulfilled place a sell order slightly above the original grid level
                 if active_orders[id] < 0:
@@ -109,7 +111,7 @@ while True:
                     btc_per_order = str(round(0.999 * usdt_per_order / id_price, 5))
 
                     ordersell = client.order_limit_sell(
-                    symbol="BTCUSDT",
+                    symbol=trading_symbol,
                     quantity=btc_per_order,
                     price=selling_price
                     )
@@ -124,7 +126,7 @@ while True:
                     btc_per_order = str(round(usdt_per_order / id_price, 5))
                     
                     orderbuy = client.order_limit_buy(
-                    symbol="BTCUSDT",
+                    symbol=trading_symbol,
                     quantity=btc_per_order,
                     price=buying_price
                     )
@@ -153,7 +155,7 @@ while True:
             btc_per_order = str(round(usdt_per_order / -missing_price, 5))
 
             orderbuy = client.order_limit_buy(
-            symbol="BTCUSDT",
+            symbol=trading_symbol,
             quantity=btc_per_order,
             price=buying_price
             )
@@ -170,7 +172,7 @@ while True:
             btc_per_order = str(round(0.999 * usdt_per_order / missing_price, 5))
 
             ordersell = client.order_limit_sell(
-            symbol="BTCUSDT",
+            symbol=trading_symbol,
             quantity=btc_per_order,
             price=selling_price
             )
