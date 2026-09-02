@@ -106,14 +106,15 @@ while True:
         for id in list(active_orders):
             #If an ID in my active orders dictionary is not currently open:
             if int(id) not in open_ids:
-                #Check if the missing order is FILLED or cancelled/expired
+                #Check if the missing order is FILLED/PARTIALLY FILLED or cancelled/expired
                 missing_order = client.get_order(symbol=trading_symbol, orderId=int(id))
-                if missing_order["status"] == "FILLED":
+                btc_traded = float(missing_order["executedQty"])
+                if btc_traded > 0:
                     #If a buy order was fulfilled place a sell order slightly above the original grid level
                     if active_orders[id] < 0:
                         id_price = -active_orders[id]
                         selling_price = str(round(id_price * (1 + grid_step), 2))
-                        btc_per_order = str(round(0.999 * usdt_per_order / id_price, 5))
+                        btc_per_order = str(round(0.999 * btc_traded, 5))
 
                         ordersell = client.order_limit_sell(
                         symbol=trading_symbol,
@@ -129,20 +130,37 @@ while True:
                         id_price = active_orders[id]
                         buying_price = str(round(id_price, 2))
                         btc_per_order = str(round(usdt_per_order / id_price, 5))
-                        
+
+                        #[Edge Case] Check if the order was partially filled and sell excess at current market price assuming slippage risk
+                        leftover_btc = float(missing_order["origQty"]) - btc_traded
+                        if leftover_btc > 0.0001:
+                            leftover_sell = str(round(leftover_btc, 5))
+
+                            sweep_order = client.order_market_sell(
+                            symbol=trading_symbol,
+                            quantity=leftover_sell,
+                            )
+
+                            # Track the exact slippage/profit of the market sweep
+                            sweep_revenue = float(sweep_order["cummulativeQuoteQty"])
+                            sweep_profit = (0.999 * sweep_revenue) - (id_price * (leftover_btc / 0.999))
+                            cumul_profit += sweep_profit
+                            print(f"🧹 Dust Sweep Market Sell! Net impact on profit: ${sweep_profit:.2f}.")
+
                         orderbuy = client.order_limit_buy(
                         symbol=trading_symbol,
                         quantity=btc_per_order,
                         price=buying_price
                         )
-                        
+ 
                         active_orders[orderbuy["orderId"]] = -id_price
                         active_orders.pop(id)
                         
                         #Net and Cumulative Profit tracker
-                        net_profit = usdt_per_order * (grid_step - (0.001 + 0.001 * (1 + grid_step)))
+                        revenue_usdt = float(missing_order["cummulativeQuoteQty"])
+                        net_profit = (0.999 * revenue_usdt) - (id_price * (btc_traded / 0.999))
                         cumul_profit += net_profit
-                        print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.4f}. Total net profit made since start: {cumul_profit:.4f}")
+                        print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.2f}. Total net profit made since start: {cumul_profit:.2f}")
 
                 #The order is cancelled or expired and should be removed from active orders and into a virtual queue
                 else:      
@@ -195,7 +213,7 @@ while True:
     except requests.exceptions.RequestException as error:
         print(f"\033[93m ⚠️ Loop execution failed due to the following network exception: {error} \033[0m")
         error_count += 1
-        if error_count >= 20:
+        if error_count >= 75:
             print(f"\033[91m ❌ Too many consecutive errors. Exiting the program \033[0m")
             exit()
         time.sleep(5)
