@@ -2,6 +2,7 @@ import requests
 import os
 import time
 import json
+from decimal import Decimal, ROUND_DOWN
 from dotenv import load_dotenv
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
@@ -114,7 +115,8 @@ while True:
                     if active_orders[id] < 0:
                         id_price = -active_orders[id]
                         selling_price = str(round(id_price * (1 + grid_step), 2))
-                        btc_per_order = str(round(0.999 * btc_traded, 5))
+                        dec_btc = Decimal(str(0.999 * btc_traded))
+                        btc_per_order = str(dec_btc.quantize(Decimal("0.00001"), rounding=ROUND_DOWN))
 
                         ordersell = client.order_limit_sell(
                         symbol=trading_symbol,
@@ -134,7 +136,8 @@ while True:
                         #[Edge Case] Check if the order was partially filled and sell excess at current market price assuming slippage risk
                         leftover_btc = float(missing_order["origQty"]) - btc_traded
                         if leftover_btc > 0.0001:
-                            leftover_sell = str(round(leftover_btc, 5))
+                            dec_leftover = Decimal(str(leftover_btc))
+                            leftover_sell = str(dec_leftover.quantize(Decimal("0.00001"), rounding=ROUND_DOWN))
 
                             sweep_order = client.order_market_sell(
                             symbol=trading_symbol,
@@ -160,7 +163,7 @@ while True:
                         revenue_usdt = float(missing_order["cummulativeQuoteQty"])
                         net_profit = (0.999 * revenue_usdt) - (id_price * (btc_traded / 0.999))
                         cumul_profit += net_profit
-                        print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.2f}. Total net profit made since start: {cumul_profit:.2f}")
+                        print(f"💲💲💲 Sell order completed! Net profit gained: ${net_profit:.2f}. Total net profit made since start: ${cumul_profit:.2f}")
 
                 #The order is cancelled or expired and should be removed from active orders and into a virtual queue
                 else:      
@@ -192,7 +195,8 @@ while True:
             #If sell, check if selling price > BTC and place it
             elif missing_price > 0 and missing_price * (1 + grid_step) > live_price:
                 selling_price = str(round(missing_price * (1 + grid_step), 2))
-                btc_per_order = str(round(0.999 * usdt_per_order / missing_price, 5))
+                dec_btc = Decimal(str(0.999 * usdt_per_order / missing_price))
+                btc_per_order = str(dec_btc.quantize(Decimal("0.00001"), rounding=ROUND_DOWN))
 
                 ordersell = client.order_limit_sell(
                 symbol=trading_symbol,
