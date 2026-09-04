@@ -64,8 +64,9 @@ def save_state(bot_state, cumul_profit, active_orders, vqueue):
     bot_state["profit"] = cumul_profit
     bot_state["active"] = active_orders
     bot_state["queue"] = vqueue
-    with open("orders.json", "w") as file:
+    with open("orders_temp.json", "w") as file:
         json.dump(bot_state, file)
+    os.replace("orders_temp.json", "orders.json")
 
 if os.path.exists("orders.json"):
     bot_state = load_existing_orders()
