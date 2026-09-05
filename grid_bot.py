@@ -2,7 +2,7 @@ import requests
 import os
 import time
 import json
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from dotenv import load_dotenv
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
@@ -21,7 +21,9 @@ grid_step = 0.01
 usdt_per_order = 1000
 trading_symbol = "BTCUSDT"
 
-#Print live BTC ticker price
+#Fetch free USDT balance and print live BTC ticker price
+usdt_balance = client.get_asset_balance(asset = "USDT")
+free_usdt = float(usdt_balance["free"])
 ticker = client.get_symbol_ticker(symbol=trading_symbol)
 current_price = float(ticker["price"])
 print(f"📈 Current {trading_symbol} Price: ${current_price:.2f}")
@@ -42,7 +44,7 @@ def initialize_new_grid():
     init_active_orders = {}
     for price in buy_levels:
         buy_price = str(round(price, 2))
-        btc_per_order = str(round(usdt_per_order / price, 5))
+        btc_per_order = (Decimal(str(usdt_per_order)) / Decimal(str(price))).quantize(Decimal("0.00001"), rounding=ROUND_DOWN)
 
         order = client.order_limit_buy(
         symbol=trading_symbol,
@@ -68,6 +70,7 @@ def save_state(bot_state, cumul_profit, active_orders, vqueue):
         json.dump(bot_state, file)
     os.replace("orders_temp.json", "orders.json")
 
+
 if os.path.exists("orders.json"):
     bot_state = load_existing_orders()
     cumul_profit = float(bot_state["profit"])
@@ -75,6 +78,30 @@ if os.path.exists("orders.json"):
     vqueue = bot_state["queue"]
     print(f"💵 Previous run detected, profits up until now: ${cumul_profit:.2f}")
 else:
+    #Check if USDT balance is enough to establish a new grid.
+    if free_usdt < n * usdt_per_order:
+            print(f"\033[91m ❌ Insufficient USDT balance to establish a new grid. Exiting the program \033[0m")
+            exit()
+
+    #Fetch minimum BTC trade price in USDT
+    symbol_info = client.get_symbol_info(trading_symbol)
+    for f in symbol_info["filters"]:
+        if f["filterType"] in ["NOTIONAL", "MIN_NOTIONAL"]:
+            min_trade_size = Decimal(f["minNotional"])
+            break
+    #Check if USDT per order is enough to get accepted by Binance
+    legal_usdt_values = []
+    for k in range(1, n+1):
+        test_price = Decimal(str(current_price * (1 - k * grid_step)))
+        legal_btc = (min_trade_size / test_price).quantize(Decimal("0.00001"), rounding=ROUND_UP)
+        legal_usdt = legal_btc * test_price
+        legal_usdt_values.append(legal_usdt)
+    min_legal_usdt = max(legal_usdt_values)
+    if usdt_per_order < min_legal_usdt:
+        print(f"\033[91m ❌ Insufficient USDT per order (Binance minimum order for {trading_symbol} is: ${min_legal_usdt}). Exiting the program \033[0m")
+        exit()
+
+    #Initialize the new grid
     active_orders = initialize_new_grid()
     cumul_profit = 0
     vqueue = []
@@ -82,11 +109,9 @@ else:
     bot_state = {"profit": cumul_profit, "active": active_orders, "queue": vqueue}
     with open("orders.json", "w") as file:
         json.dump(bot_state, file)
-    
+
 
 #Print currently free and locked USDT and BTC balances
-usdt_balance = client.get_asset_balance(asset = "USDT")
-free_usdt = float(usdt_balance["free"])
 locked_usdt = float(usdt_balance["locked"])
 print(f"💰 Available USDT: ${free_usdt:.2f} free + ${locked_usdt:.2f} locked")
 
